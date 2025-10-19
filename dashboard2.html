@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predictive Maintenance Interactive Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@1.2.1"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+        }
+        .clickable-chart {
+            cursor: pointer;
+        }
+        .loader-overlay, .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: white;
+            transition: opacity 0.3s ease;
+        }
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 8px solid #3b82f6;
+            width: 60px;
+            height: 60px;
+            animation: spin 1.5s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .btn-glow {
+            box-shadow: 0 0 5px rgba(59, 130, 246, 0.5), 0 0 10px rgba(59, 130, 246, 0.3);
+            transition: all 0.3s ease;
+        }
+        .btn-glow:hover {
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.8), 0 0 25px rgba(59, 130, 246, 0.5);
+        }
+        .card {
+            background: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover:not(.no-hover) {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .insights-card {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.7s ease-in-out, padding 0.7s ease-in-out;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        .insights-card.show {
+             max-height: 500px; /* Adjust as needed */
+             padding-top: 1.5rem;
+             padding-bottom: 1.5rem;
+        }
+        .tooltip-container {
+            position: relative;
+            display: inline-block;
+        }
+        .tooltip-icon {
+            cursor: pointer;
+            margin-left: 8px;
+            color: #9ca3af;
+        }
+        .tooltip-text {
+            visibility: hidden;
+            width: 250px;
+            background-color: #1f2937;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 8px;
+            position: absolute;
+            z-index: 10;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 0.875rem;
+        }
+        .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #1f2937 transparent transparent transparent;
+        }
+        .tooltip-container:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="loader" class="loader-overlay hidden opacity-0">
+        <div class="loader"></div>
+        <p id="loader-text" class="mt-4 text-xl font-medium">Training model...</p>
+    </div>
+
+    <div id="chartModal" class="modal-overlay hidden opacity-0">
+        <div class="bg-white rounded-lg shadow-2xl p-6 w-11/12 h-5/6 flex flex-col">
+            <div class="flex justify-between items-center mb-4 flex-shrink-0">
+                <h2 id="modal-title" class="text-2xl font-bold text-gray-800">Chart View</h2>
+                <div>
+                     <button onclick="resetZoom()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg mr-2 transition">Reset Zoom</button>
+                    <button onclick="closeChartModal()" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition">Close</button>
+                </div>
+            </div>
+            <div class="flex-grow relative">
+                <canvas id="modalChartCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-10">
+            <h1 class="text-5xl font-extrabold text-gray-900">Interactive Dashboard</h1>
+            <p class="text-xl text-gray-600 mt-2">Comparative Analysis for Predictive Maintenance</p>
+        </header>
+
+        <div class="card p-6 mb-8 no-hover">
+            <h2 class="text-2xl font-semibold mb-4 text-center">Run Analysis</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button onclick="runSimulation('Random Forest')" class="btn-glow w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                    Random Forest
+                </button>
+                <button onclick="runSimulation('SVR')" class="btn-glow w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                    SVR
+                </button>
+                <button onclick="runSimulation('LSTM')" class="btn-glow w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                    LSTM
+                </button>
+            </div>
+        </div>
+
+        <div id="results-section" class="hidden">
+            <h2 class="text-3xl font-bold text-center mb-6">Simulation Results</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="card p-6 text-center">
+                    <h3 class="text-lg font-semibold text-gray-500 flex items-center justify-center">Active Model</h3>
+                    <p id="active-model" class="text-3xl font-bold text-blue-600 mt-2">-</p>
+                </div>
+                <div class="card p-6 text-center">
+                    <h3 class="text-lg font-semibold text-gray-500 flex items-center justify-center">RMSE Score
+                        <div class="tooltip-container">
+                            <span class="tooltip-icon">ⓘ</span>
+                            <span class="tooltip-text">Root Mean Square Error. It's the average error of the model, in cycles. Lower is better!</span>
+                        </div>
+                    </h3>
+                    <p id="rmse-score" class="text-3xl font-bold text-gray-800 mt-2">-</p>
+                </div>
+                 <div class="card p-6 text-center">
+                    <h3 class="text-lg font-semibold text-gray-500 flex items-center justify-center">Training Time
+                         <div class="tooltip-container">
+                            <span class="tooltip-icon">ⓘ</span>
+                            <span class="tooltip-text">The time it takes for the model to "learn" from the data. Like study time for a student.</span>
+                        </div>
+                    </h3>
+                    <p id="training-time" class="text-3xl font-bold text-gray-800 mt-2">-</p>
+                </div>
+            </div>
+
+            <div id="insights-card" class="card insights-card mb-8 no-hover">
+                <div id="insights-content" class="px-6"></div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="card p-4 md:p-6">
+                    <h3 class="text-xl font-semibold mb-4 text-center">Predictions vs. Actual RUL</h3>
+                    <div class="chart-container clickable-chart" onclick="openChartModal('predictions')">
+                        <canvas id="predictionsChart"></canvas>
+                    </div>
+                </div>
+                <div class="card p-4 md:p-6">
+                    <h3 class="text-xl font-semibold mb-4 text-center">Overall Performance (RMSE)</h3>
+                     <div class="chart-container clickable-chart" onclick="openChartModal('comparison')">
+                        <canvas id="comparisonChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-12">
+             <div class="card p-6 no-hover">
+                <h2 class="text-2xl font-bold text-center mb-4">Key Concepts Explained</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 text-gray-700">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2">What is "Model Training"?</h3>
+                        <p>Think of it like teaching a student. We show the model thousands of examples from the past (the engine sensor data) and for each example, we give it the correct answer (how many cycles were left before failure). The model then tries to figure out the "rules" by itself. The Training Time is simply how long this learning process takes. Complex models like LSTM need more "study time".</p>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2">What does the "RMSE Score" mean?</h3>
+                        <p>RMSE stands for Root Mean Square Error. The easiest way to think of it is as a grade for the model's performance. It represents the average mistake the model makes, measured in cycles. So, an RMSE of 15 means the model's prediction is, on average, off by about 15 cycles. Just like in golf, a lower score is better!</p>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold mb-2">How to Read the Charts?</h3>
+                        <p>Predictions Chart (Left): The solid blue line is the "truth" – the actual number of cycles an engine had left. The dotted line is our model's "guess". The goal is for the dotted line to follow the blue line as closely as possible. It shows us where the model is accurate and where it makes mistakes.</p>
+                    </div>
+                     <div>
+                        <h3 class="text-xl font-semibold mb-2">What about the Bar Chart?</h3>
+                        <p>Performance Chart (Right): This is the final scoreboard. It simply shows the RMSE score for each model we tested. It allows us to see at a glance which model is the "winner" – the one with the shortest bar (the lowest error).</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const trueRUL = [112, 98, 69, 82, 91, 93, 91, 28, 40, 85, 47, 8, 133, 111, 40, 87, 36, 12, 137, 20, 101, 8, 89, 13, 111, 95, 12, 131, 126, 108, 27, 49, 109, 18, 59, 101, 31, 11, 79, 104, 30, 14, 128, 47, 43, 85, 99, 118, 70, 11, 12, 100, 10, 8, 38, 103, 11, 34, 12, 114, 10, 8, 12, 12, 114, 12, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114, 10, 8, 12, 12, 114];
+        
+        // --- UPDATED WITH YOUR REAL RESULTS ---
+        const modelData = {
+            'Random Forest': {
+                rmse: 17.61, time: 28.5, // Time is an example, update with your actual time
+                predictions: [/* This is a placeholder, real script generates this */], 
+                color: 'rgba(34, 197, 94, 1)',
+                insights: {
+                    title: 'Random Forest Insights',
+                    eli5: "Imagine you ask hundreds of different experts the same question. Each expert gives their opinion. You then take the average of all their answers. This 'wisdom of the crowd' is usually more accurate than any single expert. That's a Random Forest!",
+                    pros: 'Fast to train, robust, and gives a good idea of which sensors are most important for the prediction.',
+                    cons: 'Can be less accurate than more complex models for time-series data as it looks at data points individually, not as a sequence.'
+                }
+            },
+            'SVR': {
+                rmse: 16.70, time: 42.1, // Time is an example
+                predictions: [/* This is a placeholder, real script generates this */], 
+                color: 'rgba(249, 115, 22, 1)',
+                insights: {
+                    title: 'SVR Insights',
+                    eli5: "Imagine trying to draw a line that best fits a cloud of points, but you're only allowed a certain amount of error (a 'tube' around the line). SVR tries to fit as many points as possible inside this tube, ignoring outliers. It's a robust way to find a trend.",
+                    pros: 'Very effective in high-dimensional spaces and robust to outliers.',
+                    cons: 'Can be slow to train on large datasets and is sensitive to the choice of its parameters.'
+                }
+            },
+            'LSTM': {
+                rmse: 15.30, time: 195.3, // Time is an example
+                predictions: [/* This is a placeholder, real script generates this */], 
+                color: 'rgba(239, 68, 68, 1)',
+                insights: {
+                    title: 'LSTM Insights',
+                    eli5: "Imagine reading a story. You don't just understand each word individually; you remember what happened before. An LSTM is like a person with a good memory. It reads the sensor data in order and remembers past events to predict what will happen next.",
+                    pros: 'Excellent for sequential data like sensor readings because it captures time-based patterns. Often the most accurate model.',
+                    cons: 'Much slower to train and computationally expensive. Can be a "black box," making it hard to interpret.'
+                }
+            }
+        };
+        // NOTE: The prediction arrays are kept from the old data for visual simulation purposes.
+        // Your Python script `comparaison_modeles_final_correct.png` has the TRUE visual output.
+        modelData['Random Forest'].predictions = [101.4, 95.2, 75.8, 80.1, 88.5, 95.6, 90.1, 45.2, 55.7, 80.3, 52.9, 25.4, 115.6, 105.1, 55.2, 85.4, 48.9, 30.1, 120.3, 35.8, 98.2, 28.4, 88.6, 30.7, 105.3, 90.1, 30.8, 115.4, 110.2, 100.9, 45.3, 60.1, 100.2, 35.6, 65.7, 95.8, 48.9, 28.7, 80.1, 98.4, 45.6, 30.1, 115.2, 55.8, 50.1, 85.3, 98.2, 110.4, 75.1, 30.2, 30.8, 95.4, 28.6, 25.4, 50.1, 98.7, 28.9, 45.6, 30.1, 105.8, 28.7, 25.8, 30.1, 30.8, 105.4, 30.1, 28.9, 25.4, 30.8, 30.1, 105.4, 28.9, 25.8, 30.1, 30.8, 105.4, 28.9, 25.8, 30.1, 30.8, 105.4, 28.9, 25.8, 30.1, 30.8, 105.4];
+        modelData['SVR'].predictions = [98.2, 90.5, 80.1, 82.3, 85.6, 98.2, 88.3, 55.6, 60.2, 78.9, 60.1, 35.2, 110.4, 100.8, 62.3, 80.1, 55.4, 40.2, 115.8, 45.6, 95.3, 38.9, 85.2, 40.1, 100.7, 88.4, 40.2, 110.1, 105.9, 98.4, 55.6, 65.8, 98.1, 45.2, 70.3, 90.1, 55.8, 38.4, 82.3, 95.1, 55.7, 40.2, 110.8, 62.1, 58.4, 82.9, 95.3, 105.1, 78.4, 40.3, 40.1, 90.2, 38.7, 35.8, 58.4, 95.1, 38.2, 55.7, 40.3, 100.1, 38.9, 35.4, 40.3, 40.1, 100.2, 40.3, 38.7, 35.8, 40.1, 40.3, 100.2, 38.7, 35.8, 40.1, 40.3, 100.2, 38.7, 35.8, 40.1, 40.3, 100.2, 38.7, 35.8, 40.1, 40.3, 100.2];
+        modelData['LSTM'].predictions = [108.1, 99.5, 72.3, 84.0, 90.1, 94.2, 91.5, 35.8, 42.1, 84.3, 50.1, 18.9, 125.0, 109.8, 48.7, 88.2, 41.3, 20.5, 128.9, 28.4, 100.1, 15.8, 90.2, 22.1, 109.8, 96.2, 19.8, 124.3, 118.9, 106.7, 33.1, 52.4, 107.8, 25.3, 62.1, 99.8, 38.4, 18.2, 81.0, 102.1, 35.8, 20.1, 121.4, 51.2, 48.9, 86.3, 100.1, 115.3, 72.8, 18.9, 19.4, 98.7, 16.2, 15.8, 42.3, 101.4, 18.2, 38.9, 19.4, 110.2, 16.8, 15.4, 19.4, 19.8, 110.2, 19.4, 16.8, 15.4, 19.8, 19.4, 110.2, 16.8, 15.4, 19.8, 19.4, 110.2, 16.8, 15.4, 19.8, 19.4, 110.2];
+
+        // --- CHART & UI LOGIC ---
+        let predictionsChart, comparisonChart, modalChart;
+        let activeModel = null;
+        
+        Chart.register(window.ChartZoom);
+
+        function animateValue(obj, start, end, duration) { /* ... same as before ... */ }
+        function animateValueTime(obj, start, end, duration) { /* ... same as before ... */ }
+        
+        function animateValue(obj, start, end, duration) {
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                obj.innerHTML = (progress * (end - start) + start).toFixed(2);
+                if (progress < 1) window.requestAnimationFrame(step);
+                else obj.innerHTML = end.toFixed(2);
+            };
+            window.requestAnimationFrame(step);
+        }
+
+        function animateValueTime(obj, start, end, duration) {
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                obj.innerHTML = `${(progress * (end - start) + start).toFixed(1)} s`;
+                if (progress < 1) window.requestAnimationFrame(step);
+                else obj.innerHTML = `${end.toFixed(1)} s`;
+            };
+            window.requestAnimationFrame(step);
+        }
+
+
+        function createOrUpdatePredictionsChart(modelName) {
+            const ctx = document.getElementById('predictionsChart').getContext('2d');
+            const data = modelData[modelName];
+            if (predictionsChart) predictionsChart.destroy();
+            predictionsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({ length: trueRUL.length }, (_, i) => i + 1),
+                    datasets: [
+                        { label: 'Actual RUL', data: trueRUL, borderColor: 'rgba(59, 130, 246, 1)', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 2.5, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 },
+                        { label: `Predicted RUL (${modelName})`, data: data.predictions, borderColor: data.color, borderWidth: 2.5, borderDash: [5, 5], fill: false, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'RUL (cycles)' }}, x: { title: { display: true, text: 'Test Engine Index' }}}, plugins: { legend: { position: 'top' } } }
+            });
+        }
+
+        function createOrUpdateComparisonChart(activeModelName = null) {
+            const ctx = document.getElementById('comparisonChart').getContext('2d');
+            const models = Object.keys(modelData);
+            const rmseScores = models.map(m => modelData[m].rmse);
+            const backgroundColors = models.map(m => m === activeModelName ? modelData[m].color : modelData[m].color.replace('1)', '0.5)'));
+            const borderColors = models.map(m => modelData[m].color);
+
+            if (comparisonChart) {
+                comparisonChart.data.datasets[0].data = rmseScores;
+                comparisonChart.data.datasets[0].backgroundColor = backgroundColors;
+                comparisonChart.update();
+                return;
+            }
+            comparisonChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: models,
+                    datasets: [{ label: 'RMSE Score', data: rmseScores, backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 2 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, animation: { duration: 1000, easing: 'easeOutQuart' }, scales: { y: { beginAtZero: true, title: { display: true, text: 'RMSE' }}}, plugins: { legend: { display: false } } }
+            });
+        }
+
+        function showInsights(modelName) {
+            const insightsCard = document.getElementById('insights-card');
+            const insightsContent = document.getElementById('insights-content');
+            const insights = modelData[modelName].insights;
+            insightsContent.innerHTML = `
+                <h3 class="text-2xl font-bold mb-4 text-center">${insights.title}</h3>
+                <div class="space-y-4 text-left">
+                    <p class="text-gray-700">${insights.eli5.replace('ELI5: ','')}</p>
+                    <div class="border-t pt-4 mt-4">
+                        <p class="font-semibold text-gray-800">Pros: <span class="font-normal text-green-600">${insights.pros.replace('Pros: ','')}</span></p>
+                        <p class="font-semibold text-gray-800 mt-2">Cons: <span class="font-normal text-red-600">${insights.cons.replace('Cons: ','')}</span></p>
+                    </div>
+                </div>
+            `;
+            insightsCard.classList.add('show');
+        }
+
+        function runSimulation(modelName) {
+            activeModel = modelName;
+            const loader = document.getElementById('loader');
+            const loaderText = document.getElementById('loader-text');
+            const resultsSection = document.getElementById('results-section');
+            loaderText.innerText = `Training ${modelName} model... (Simulation)`;
+            loader.classList.remove('hidden');
+            setTimeout(() => loader.classList.remove('opacity-0'), 10);
+            const simulationTime = modelName === 'LSTM' ? 3000 : (modelName === 'SVR' ? 2000 : 1000);
+            setTimeout(() => {
+                const data = modelData[modelName];
+                document.getElementById('active-model').innerText = modelName;
+                animateValue(document.getElementById('rmse-score'), 0, data.rmse, 1000);
+                animateValueTime(document.getElementById('training-time'), 0, data.time, 1000);
+                resultsSection.classList.remove('hidden');
+                showInsights(modelName);
+                createOrUpdatePredictionsChart(modelName);
+                createOrUpdateComparisonChart(modelName);
+                loader.classList.add('opacity-0');
+                setTimeout(() => loader.classList.add('hidden'), 300);
+            }, simulationTime);
+        }
+        
+        const chartModal = document.getElementById('chartModal');
+        function openChartModal(chartType) {
+            if (!activeModel && chartType === 'predictions') {
+                alert('Please run a simulation first to see the predictions chart.');
+                return;
+            }
+            if(chartType === 'comparison' && !comparisonChart) return;
+
+            if (modalChart) modalChart.destroy();
+            
+            const modalCtx = document.getElementById('modalChartCanvas').getContext('2d');
+            let sourceChart = (chartType === 'predictions') ? predictionsChart : comparisonChart;
+            
+            document.getElementById('modal-title').innerText = sourceChart.options.plugins.title ? sourceChart.options.plugins.title.text + ' (Zoomable)' : 'Chart View (Zoomable)';
+
+            const config = {
+                type: sourceChart.config.type,
+                data: sourceChart.config.data,
+                options: {
+                    ...sourceChart.config.options,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        ...sourceChart.config.options.plugins,
+                        zoom: {
+                            pan: { enabled: true, mode: 'xy' },
+                            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' }
+                        }
+                    }
+                }
+            };
+            modalChart = new Chart(modalCtx, config);
+            chartModal.classList.remove('hidden');
+            setTimeout(() => chartModal.classList.remove('opacity-0'), 10);
+        }
+        function closeChartModal() {
+            chartModal.classList.add('opacity-0');
+            setTimeout(() => chartModal.classList.add('hidden'), 300);
+        }
+        function resetZoom() { if (modalChart) modalChart.resetZoom(); }
+        window.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeChartModal(); });
+        window.onload = () => { createOrUpdateComparisonChart(); };
+    </script>
+</body>
+</html>
